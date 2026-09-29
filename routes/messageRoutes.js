@@ -8,6 +8,10 @@ router.get('/messages', (req, res) => {
     res.json(messages);
 });
 
+router.get('/test-error', (req, res) => {
+    throw new Error('Something went wrong!');
+});
+
 router.post('/messages', (req, res) => {
     const { sender, text } = req.body;
 
@@ -43,5 +47,6 @@ router.post('/messages', (req, res) => {
     data: newMessage
 });
 });
+
 
 module.exports = router;

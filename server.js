@@ -16,33 +16,15 @@ app.get('/users', (req, res) => {
     res.send('Users endpoint');
 });
 
-app.get('/messages', (req, res) => {
-    res.json(messages);
-});
+app.use((err, req, res, next) => {
+    console.error(err.message);
 
-app.post('/messages', (req, res) => {
-    const newMessage = req.body;
-
-    if (!newMessage.text) {
-        return res.status(400).json({
-            error: 'Message text is required'
-        });
-    }
-
-    if (typeof newMessage.text !== 'string') {
-        return res.status(400).json({
-            error: 'Message text must be a string'
-        });
-    }
-
-    messages.push(newMessage);
-
-    res.json({
-        message: 'Message saved!',
-        data: newMessage
+    res.status(500).json({
+        error: 'Something went wrong on the server'
     });
 });
 
 app.listen(3000, () => {
     console.log('Server running on http://localhost:3000');
 });
+
