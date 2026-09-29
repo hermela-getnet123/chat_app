@@ -9,19 +9,32 @@ router.get('/messages', (req, res) => {
 });
 
 router.post('/messages', (req, res) => {
-    const newMessage = req.body;
+    const { sender, text } = req.body;
 
-    if (!newMessage.text) {
+    if (!sender) {
+        return res.status(400).json({
+            error: 'Sender is required'
+        });
+    }
+
+    if (!text) {
         return res.status(400).json({
             error: 'Message text is required'
         });
     }
 
-    if (typeof newMessage.text !== 'string') {
+    if (typeof text !== 'string') {
         return res.status(400).json({
             error: 'Message text must be a string'
         });
     }
+
+    const newMessage = {
+        id: Date.now(),
+        sender: sender,
+        text: text,
+        createdAt: new Date()
+    };
 
     messages.push(newMessage);
 
