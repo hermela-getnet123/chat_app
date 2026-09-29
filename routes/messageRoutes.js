@@ -38,10 +38,10 @@ router.post('/messages', (req, res) => {
 
     messages.push(newMessage);
 
-    res.json({
-        message: 'Message saved!',
-        data: newMessage
-    });
+    res.status(201).json({
+    message: 'Message saved!',
+    data: newMessage
+});
 });
 
 module.exports = router;
