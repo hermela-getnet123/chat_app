@@ -1,26 +1,14 @@
 const express = require('express');
 
-const app = express();
+const router = express.Router();
 
-app.use(express.json());
+const messages = require('../data');
 
-const messageRoutes = require('./routes/messageRoutes');
-
-app.use(messageRoutes);
-
-app.get('/', (req, res) => {
-    res.send('Chat server is running!');
-});
-
-app.get('/users', (req, res) => {
-    res.send('Users endpoint');
-});
-
-app.get('/messages', (req, res) => {
+router.get('/messages', (req, res) => {
     res.json(messages);
 });
 
-app.post('/messages', (req, res) => {
+router.post('/messages', (req, res) => {
     const newMessage = req.body;
 
     if (!newMessage.text) {
@@ -43,6 +31,4 @@ app.post('/messages', (req, res) => {
     });
 });
 
-app.listen(3000, () => {
-    console.log('Server running on http://localhost:3000');
-});
+module.exports = router;
