@@ -1,5 +1,10 @@
 const messages = require('../data');
 
+
+const getMessages = (req, res) => {
+    res.json(messages);
+};
+
 const createMessage = (req, res) => {
     const { sender, text } = req.body;
 
@@ -37,5 +42,6 @@ const createMessage = (req, res) => {
 };
 
 module.exports = {
+    getMessages,
     createMessage
 };
