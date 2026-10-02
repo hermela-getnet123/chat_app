@@ -1,11 +1,20 @@
-const messages = require('../data');
+const Message = require('../models/Message');
 
+const getMessages = async (req, res) => {
+    try {
+        const messages = await Message.find();
 
-const getMessages = (req, res) => {
-    res.json(messages);
+        res.json(messages);
+    } catch (error) {
+        console.error('Error getting messages:', error.message);
+
+        res.status(500).json({
+            error: 'Failed to get messages'
+        });
+    }
 };
 
-const createMessage = (req, res) => {
+const createMessage = async (req, res) => {
     const { sender, text } = req.body;
 
     if (!sender) {
@@ -26,14 +35,10 @@ const createMessage = (req, res) => {
         });
     }
 
-    const newMessage = {
-        id: Date.now(),
+    const newMessage = await Message.create({
         sender: sender,
-        text: text,
-        createdAt: new Date()
-    };
-
-    messages.push(newMessage);
+        text: text
+    });
 
     res.status(201).json({
         message: 'Message saved!',
