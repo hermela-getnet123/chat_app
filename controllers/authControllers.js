@@ -1,8 +1,7 @@
+const bcrypt = require('bcrypt');
 const User = require('../models/User');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 
-const register = async (req, res) => {
+const registerUser = async (req, res) => {
     try {
         const { username, email, password } = req.body;
 
@@ -13,18 +12,21 @@ const register = async (req, res) => {
         }
 
         const existingUser = await User.findOne({
-            email: email
+            $or: [
+                { username: username },
+                { email: email }
+            ]
         });
 
         if (existingUser) {
-            return res.status(400).json({
-                error: 'User already exists'
+            return res.status(409).json({
+                error: 'Username or email already exists'
             });
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        const user = await User.create({
+        const newUser = await User.create({
             username: username,
             email: email,
             password: hashedPassword
@@ -33,9 +35,9 @@ const register = async (req, res) => {
         res.status(201).json({
             message: 'User registered successfully',
             user: {
-                id: user._id,
-                username: user.username,
-                email: user.email
+                id: newUser._id,
+                username: newUser.username,
+                email: newUser.email
             }
         });
 
@@ -48,6 +50,54 @@ const register = async (req, res) => {
     }
 };
 
+const loginUser = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({
+                error: 'Email and password are required'
+            });
+        }
+
+        const user = await User.findOne({ email: email });
+
+        if (!user) {
+            return res.status(401).json({
+                error: 'Invalid email or password'
+            });
+        }
+
+        const passwordMatch = await bcrypt.compare(
+            password,
+            user.password
+        );
+
+        if (!passwordMatch) {
+            return res.status(401).json({
+                error: 'Invalid email or password'
+            });
+        }
+
+        res.json({
+            message: 'Login successful',
+            user: {
+                id: user._id,
+                username: user.username,
+                email: user.email
+            }
+        });
+
+    } catch (error) {
+        console.error('Login error:', error.message);
+
+        res.status(500).json({
+            error: 'Failed to login'
+        });
+    }
+};
+
 module.exports = {
-    register
+    registerUser,
+    loginUser
 };
