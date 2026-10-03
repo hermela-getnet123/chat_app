@@ -7,8 +7,10 @@ const {
     createMessage
 } = require('../controllers/messageController');
 
-router.get('/messages', getMessages);
+const protect = require('../middleware/authMiddleware');
 
-router.post('/messages', createMessage);
+router.get('/messages', protect, getMessages);
+
+router.post('/messages', protect, createMessage);
 
 module.exports = router;

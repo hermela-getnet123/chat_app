@@ -2,9 +2,11 @@ const Message = require('../models/Message');
 
 const getMessages = async (req, res) => {
     try {
-        const messages = await Message.find();
+        const messages = await Message.find()
+            .populate('sender', 'username email');
 
         res.json(messages);
+
     } catch (error) {
         console.error('Error getting messages:', error.message);
 
@@ -13,37 +15,46 @@ const getMessages = async (req, res) => {
         });
     }
 };
-
 const createMessage = async (req, res) => {
-    const { sender, text } = req.body;
+    try {
+        const { text, conversationId } = req.body;
 
-    if (!sender) {
-        return res.status(400).json({
-            error: 'Sender is required'
+        if (!conversationId) {
+            return res.status(400).json({
+                error: 'Conversation ID is required'
+            });
+        }
+
+        if (!text) {
+            return res.status(400).json({
+                error: 'Message text is required'
+            });
+        }
+
+        if (typeof text !== 'string') {
+            return res.status(400).json({
+                error: 'Message text must be a string'
+            });
+        }
+
+        const newMessage = await Message.create({
+            sender: req.user.userId,
+            conversation: conversationId,
+            text: text
+        });
+
+        res.status(201).json({
+            message: 'Message saved!',
+            data: newMessage
+        });
+
+    } catch (error) {
+        console.error('Error creating message:', error.message);
+
+        res.status(500).json({
+            error: 'Failed to create message'
         });
     }
-
-    if (!text) {
-        return res.status(400).json({
-            error: 'Message text is required'
-        });
-    }
-
-    if (typeof text !== 'string') {
-        return res.status(400).json({
-            error: 'Message text must be a string'
-        });
-    }
-
-    const newMessage = await Message.create({
-        sender: sender,
-        text: text
-    });
-
-    res.status(201).json({
-        message: 'Message saved!',
-        data: newMessage
-    });
 };
 
 module.exports = {

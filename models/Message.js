@@ -7,10 +7,15 @@ const messageSchema = new mongoose.Schema({
         required: true
     },
 
+    conversation: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Conversation',
+        required: true
+    },
+
     text: {
         type: String,
-        required: true,
-        trim: true
+        required: true
     },
 
     createdAt: {

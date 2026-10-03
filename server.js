@@ -12,10 +12,12 @@ app.use(express.json());
 const messageRoutes = require('./routes/messageRoutes');
 const userRoutes = require('./routes/userRoutes');
 const authRoutes = require('./routes/authRoutes');
+const conversationRoutes = require('./routes/conversationRoutes');
 
 app.use(messageRoutes);
 app.use(userRoutes);
 app.use(authRoutes);
+app.use(conversationRoutes);
 
 app.get('/', (req, res) => {
     res.send('Chat server is running!');
