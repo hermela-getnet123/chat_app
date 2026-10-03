@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 
 const connectDB = require('./config/db');
 const Message = require('./models/Message');
+const Conversation = require('./models/Conversation');
 
 const app = express();
 
@@ -80,14 +81,36 @@ io.on('connection', (socket) => {
         `User ID: ${socket.user.userId}`
     );
 
-    // Join conversation
-    socket.on('joinConversation', (conversationId) => {
+        // Join conversation
+    socket.on('joinConversation', async (conversationId) => {
+        try {
+            const conversation = await Conversation.findOne({
+                _id: conversationId,
+                participants: socket.user.userId
+            });
 
-        socket.join(`conversation:${conversationId}`);
+            if (!conversation) {
+                return socket.emit('conversationError', {
+                    error: 'You are not a participant in this conversation'
+                });
+            }
 
-        console.log(
-            `${socket.user.username} joined conversation ${conversationId}`
-        );
+            socket.join(`conversation:${conversationId}`);
+
+            console.log(
+                `${socket.user.username} joined conversation ${conversationId}`
+            );
+
+        } catch (error) {
+            console.error(
+                'Error joining conversation:',
+                error.message
+            );
+
+            socket.emit('conversationError', {
+                error: 'Failed to join conversation'
+            });
+        }
     });
 
     // Send message
@@ -103,7 +126,17 @@ io.on('connection', (socket) => {
                             'Conversation ID and text are required'
                     });
                 }
+                
+                const conversation = await Conversation.findOne({
+                    _id: conversationId,
+                    participants: socket.user.userId
+                });
 
+                if (!conversation) {
+                    return socket.emit('messageError', {
+                        error: 'You are not a participant in this conversation'
+                    });
+                }
                 const newMessage =
                     await Message.create({
                         sender: socket.user.userId,
