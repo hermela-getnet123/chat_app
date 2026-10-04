@@ -1,6 +1,6 @@
 const { io } = require('socket.io-client');
 
-const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2YWJmNzhjMzUyMWY0MDQwYmZjY2E5M2MiLCJ1c2VybmFtZSI6Ikhlcm1lbGEyIiwiaWF0IjoxNzkxMTIzMTIwLCJleHAiOjE3OTExMjY3MjB9.ZMLIJfy9YD7boRxxQnJGMtFls2BsE4zyKd1paU5rEUw';
+const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2YWJmZTI5MzQ4ZDYyYjU4MWNmZGM2ZmEiLCJ1c2VybmFtZSI6Ikhlcm1lbGEzIiwiaWF0IjoxNzkxMTIzMTk2LCJleHAiOjE3OTExMjY3OTZ9.vYY4CRtj96AnXTFmobuU8Pd0B14HEbKf7SboD_V7kek';
 
 const conversationId = '6ac25f8c483259e6a2e8effc';
 
@@ -11,21 +11,11 @@ const socket = io('http://localhost:3000', {
 });
 
 socket.on('connect', () => {
-    console.log('User A connected!');
+    console.log('User B connected!');
     console.log('Socket ID:', socket.id);
 
     socket.emit(
         'joinConversation',
-        conversationId
-    );
-
-    socket.emit('sendMessage', {
-        conversationId: conversationId,
-        text: 'Hello from Hermela2!'
-    });
-
-    socket.emit(
-        'typing',
         conversationId
     );
 });

@@ -111,6 +111,25 @@ io.on('connection', (socket) => {
                 error: 'Failed to join conversation'
             });
         }
+
+        socket.on('typing', (conversationId) => {
+        socket.to(`conversation:${conversationId}`).emit(
+            'userTyping',
+            {
+                userId: socket.user.userId,
+                username: socket.user.username
+            }
+        );
+    });
+
+        socket.on('stopTyping', (conversationId) => {
+        socket.to(`conversation:${conversationId}`).emit(
+            'userStoppedTyping',
+            {
+                userId: socket.user.userId
+            }
+        );
+    });
     });
 
     // Send message
