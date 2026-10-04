@@ -18,6 +18,15 @@ socket.on('connect', () => {
         'joinConversation',
         conversationId
     );
+
+    socket.emit(
+    'markAsRead',
+    conversationId
+    );
+
+    setTimeout(() => {
+    console.log('User B is waiting for messages...');
+    }, 1000);
 });
 
 socket.on('userTyping', (user) => {
@@ -42,4 +51,18 @@ socket.on('conversationError', (error) => {
 
 socket.on('connect_error', (error) => {
     console.log('Connection error:', error.message);
+});
+
+socket.on('userOnline', (user) => {
+    console.log(`${user.username} is online`);
+});
+
+socket.on('userOffline', (user) => {
+    console.log(`${user.username} is offline`);
+});
+
+socket.on('messagesRead', (data) => {
+    console.log(
+        `Messages read by ${data.userId}`
+    );
 });

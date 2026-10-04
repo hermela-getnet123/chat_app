@@ -70,9 +70,19 @@ io.use((socket, next) => {
     }
 });
 
+const onlineUsers = new Map();
 // Socket connection
 io.on('connection', (socket) => {
 
+        onlineUsers.set(
+        socket.user.userId,
+        socket.id
+    );
+
+    io.emit('userOnline', {
+        userId: socket.user.userId,
+        username: socket.user.username
+    });
     console.log(
         `User connected: ${socket.user.username}`
     );
@@ -193,11 +203,58 @@ io.on('connection', (socket) => {
     // Disconnect
     socket.on('disconnect', () => {
 
+        onlineUsers.delete(socket.user.userId);
+
+        io.emit('userOffline', {
+            userId: socket.user.userId,
+            username: socket.user.username
+        });
+
         console.log(
             `User disconnected: ${socket.user.username}`
         );
-
     });
+
+    socket.on('markAsRead', async (conversationId) => {
+
+    try {
+
+        await Message.updateMany(
+            {
+                conversation: conversationId,
+                sender: {
+                    $ne: socket.user.userId
+                },
+                readBy: {
+                    $ne: socket.user.userId
+                }
+            },
+            {
+                $addToSet: {
+                    readBy: socket.user.userId
+                }
+            }
+        );
+
+        socket.to(
+            `conversation:${conversationId}`
+        ).emit('messagesRead', {
+            userId: socket.user.userId,
+            conversationId: conversationId
+        });
+
+    } catch (error) {
+
+        console.error(
+            'Read receipt error:',
+            error.message
+        );
+
+        socket.emit('messageError', {
+            error: 'Failed to mark messages as read'
+        });
+    }
+});
 });
 
 server.listen(3000, () => {

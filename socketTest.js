@@ -19,6 +19,11 @@ socket.on('connect', () => {
         conversationId
     );
 
+    socket.emit(
+    'markAsRead',
+    conversationId
+    );
+
     socket.emit('sendMessage', {
         conversationId: conversationId,
         text: 'Hello from Hermela2!'
@@ -52,4 +57,18 @@ socket.on('conversationError', (error) => {
 
 socket.on('connect_error', (error) => {
     console.log('Connection error:', error.message);
+});
+
+socket.on('userOnline', (user) => {
+    console.log(`${user.username} is online`);
+});
+
+socket.on('userOffline', (user) => {
+    console.log(`${user.username} is offline`);
+});
+
+socket.on('messagesRead', (data) => {
+    console.log(
+        `Messages read by ${data.userId}`
+    );
 });
