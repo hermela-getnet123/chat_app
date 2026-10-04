@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 const connectDB = require('./config/db');
 const Message = require('./models/Message');
 const Conversation = require('./models/Conversation');
+const Notification = require('./models/Notification');
 
 const app = express();
 
@@ -24,6 +25,7 @@ app.use(messageRoutes);
 app.use(userRoutes);
 app.use(authRoutes);
 app.use(conversationRoutes);
+
 
 app.get('/', (req, res) => {
     res.send('Chat server is running!');
@@ -179,6 +181,44 @@ io.on('connection', (socket) => {
                         'username email'
                     );
 
+                conversation = await Conversation
+                    .findById(conversationId)
+                    .populate('participants', 'username email');
+                for (const participant of conversation.participants) {
+
+            if (participant._id.toString() === socket.user.userId) {
+                continue;
+            }
+
+            const notification = await Notification.create({
+                recipient: participant._id,
+                sender: socket.user.userId,
+                conversation: conversationId,
+                message: newMessage._id,
+                type: 'message'
+            });
+
+            const recipientSocketId =
+                onlineUsers.get(participant._id.toString());
+
+            if (recipientSocketId) {
+
+                io.to(recipientSocketId).emit(
+                    'notification',
+                    {
+                        id: notification._id,
+                        type: 'message',
+                        sender: {
+                            id: socket.user.userId,
+                            username: socket.user.username
+                        },
+                        conversationId: conversationId,
+                        messageId: newMessage._id,
+                        text: text
+                    }
+                );
+            }
+        }
                 io.to(
                     `conversation:${conversationId}`
                 ).emit(

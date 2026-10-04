@@ -66,3 +66,7 @@ socket.on('messagesRead', (data) => {
         `Messages read by ${data.userId}`
     );
 });
+
+socket.on('notification', (notification) => {
+    console.log('🔔 Notification:', notification);
+});
