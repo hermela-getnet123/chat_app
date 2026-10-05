@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const http = require('http');
+const cors = require('cors');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 
@@ -11,10 +12,10 @@ const Conversation = require('./models/Conversation');
 const Notification = require('./models/Notification');
 
 const app = express();
+app.use(cors());
+app.use(express.json());
 
 connectDB();
-
-app.use(express.json());
 
 const messageRoutes = require('./routes/messageRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -158,7 +159,7 @@ io.on('connection', (socket) => {
                     });
                 }
                 
-                const conversation = await Conversation.findOne({
+                let conversation = await Conversation.findOne({
                     _id: conversationId,
                     participants: socket.user.userId
                 });
