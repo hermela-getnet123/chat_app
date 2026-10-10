@@ -36,6 +36,7 @@ const getMessages = async (req, res) => {
         });
     }
 };
+
 const createMessage = async (req, res) => {
     try {
         const { text, conversationId } = req.body;
@@ -46,31 +47,43 @@ const createMessage = async (req, res) => {
             });
         }
 
-        if (!text) {
+        if (typeof text !== 'string' || !text.trim()) {
             return res.status(400).json({
-                error: 'Message text is required'
+                error: 'A non-empty message text is required'
             });
         }
 
-        if (typeof text !== 'string') {
-            return res.status(400).json({
-                error: 'Message text must be a string'
+        const conversation = await Conversation.findOne({
+            _id: conversationId,
+            participants: req.user.userId
+        });
+
+        if (!conversation) {
+            return res.status(403).json({
+                error: 'You cannot send messages to this conversation'
             });
         }
 
         const newMessage = await Message.create({
             sender: req.user.userId,
             conversation: conversationId,
-            text: text
+            text: text.trim()
         });
+
+        await newMessage.populate('sender', 'username email');
 
         res.status(201).json({
             message: 'Message saved!',
             data: newMessage
         });
-
     } catch (error) {
         console.error('Error creating message:', error.message);
+
+        if (error.name === 'CastError') {
+            return res.status(400).json({
+                error: 'Invalid conversation ID'
+            });
+        }
 
         res.status(500).json({
             error: 'Failed to create message'
