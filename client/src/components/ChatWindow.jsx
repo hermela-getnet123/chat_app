@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { apiFetch } from '../services/api';
 
@@ -8,85 +8,124 @@ function ChatWindow({ conversation }) {
     const [text, setText] = useState('');
     const [error, setError] = useState('');
     const [connected, setConnected] = useState(false);
+    const [loading, setLoading] = useState(true);
+
+    const socketRef = useRef(null);
 
     useEffect(() => {
         const token = localStorage.getItem('token');
+        const conversationId = conversation?._id;
 
-        if (!token || !conversation?._id) return;
+        if (!token || !conversationId) {
+            setLoading(false);
+            return;
+        }
 
         let active = true;
+        setMessages([]);
+        setError('');
+        setLoading(true);
 
         const socket = io('http://localhost:3000', {
             auth: { token }
         });
 
+        socketRef.current = socket;
+
+        socket.on('connect', () => {
+            if (!active) return;
+
+            setConnected(true);
+            socket.emit('joinConversation', conversationId);
+        });
+
+        socket.on('disconnect', () => {
+            if (active) setConnected(false);
+        });
+
+        socket.on('connect_error', (err) => {
+            if (active) setError(err.message);
+        });
+
+        socket.on('conversationError', (data) => {
+            if (active) setError(data.error);
+        });
+
+        socket.on('messageError', (data) => {
+            if (active) setError(data.error);
+        });
+
+        socket.on('newMessage', (message) => {
+            const messageConversationId =
+                message.conversation?._id || message.conversation;
+
+            if (
+                String(messageConversationId) !== String(conversationId)
+            ) {
+                return;
+            }
+
+            setMessages((previous) => {
+                if (previous.some((item) => item._id === message._id)) {
+                    return previous;
+                }
+
+                return [...previous, message];
+            });
+        });
+
         const loadMessages = async () => {
             try {
                 const data = await apiFetch(
-                    `/messages?conversationId=${conversation._id}`
+                    `/messages?conversationId=${conversationId}`
                 );
 
                 if (active) setMessages(data);
             } catch (err) {
                 if (active) setError(err.message);
+            } finally {
+                if (active) setLoading(false);
             }
         };
-
-        socket.on('connect', () => {
-            setConnected(true);
-            socket.emit('joinConversation', conversation._id);
-        });
-
-        socket.on('disconnect', () => setConnected(false));
-
-        socket.on('connect_error', (err) => {
-            setError(err.message);
-        });
-
-        socket.on('newMessage', (message) => {
-            if (
-                String(message.conversation) === String(conversation._id) ||
-                String(message.conversation?._id) === String(conversation._id)
-            ) {
-                setMessages((previous) => {
-                    if (previous.some((item) => item._id === message._id)) {
-                        return previous;
-                    }
-
-                    return [...previous, message];
-                });
-            }
-        });
-
-        socket.on('messageError', (data) => {
-            setError(data.error);
-        });
 
         loadMessages();
 
         return () => {
             active = false;
             socket.disconnect();
+
+            if (socketRef.current === socket) {
+                socketRef.current = null;
+            }
         };
     }, [conversation?._id]);
 
-    const handleSend = async (e) => {
+    const handleSend = (e) => {
         e.preventDefault();
 
         const messageText = text.trim();
+        const socket = socketRef.current;
 
-        if (!messageText) return;
+        if (!messageText || !conversation?._id) return;
 
-        const token = localStorage.getItem('token');
-
-        if (!token) {
-            setError('Please log in again.');
+        if (!socket || !socket.connected) {
+            setError('Not connected. Please wait and try again.');
             return;
         }
 
-        // The active socket will be added to the sending flow below.
-        setError('Sending setup is not finished yet.');
+        setError('');
+
+        socket.emit('sendMessage', {
+            conversationId: conversation._id,
+            text: messageText
+        });
+
+        setText('');
     };
+
+    if (!conversation) {
+        return <p>Select a conversation to start chatting.</p>;
+    }
 
     return (
         <div>
@@ -96,17 +135,41 @@ function ChatWindow({ conversation }) {
                 {connected ? 'Connected' : 'Connecting...'}
             </p>
 
-            {error && <p style={{ color: 'red' }}>{error}</p>}
+            {error && (
+                <p style={{ color: 'red' }}>{error}</p>
+            )}
 
-            <div style={{ minHeight: '250px' }}>
-                {messages.map((message) => (
-                    <div key={message._id}>
-                        <strong>
-                            {message.sender?.username || 'User'}:
-                        </strong>{' '}
-                        {message.text}
-                    </div>
-                ))}
+            <div
+                style={{
+                    minHeight: '250px',
+                    maxHeight: '400px',
+                    overflowY: 'auto',
+                    border: '1px solid #ddd',
+                    padding: '12px',
+                    marginBottom: '12px'
+                }}
+            >
+                {loading ? (
+                    <p>Loading messages...</p>
+                ) : messages.length === 0 ? (
+                    <p>No messages yet. Say hello!</p>
+                ) : (
+                    messages.map((message) => (
+                        <div key={message._id} style={{ marginBottom: '12px' }}>
+                            <strong>
+                                {message.sender?.username || 'User'}
+                            </strong>
+                            <p style={{ margin: '4px 0' }}>
+                                {message.text}
+                            </p>
+                            <small>
+                                {message.createdAt
+                                    ? new Date(message.createdAt).toLocaleTimeString()
+                                    : ''}
+                            </small>
+                        </div>
+                    ))
+                )}
             </div>
 
             <form onSubmit={handleSend}>
@@ -114,8 +177,15 @@ function ChatWindow({ conversation }) {
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     placeholder="Type a message..."
+                    style={{ padding: '10px', width: '70%' }}
                 />
-                <button type="submit">Send</button>
+
+                <button
+                    type="submit"
+                    disabled={!connected || !text.trim()}
+                >
+                    Send
+                </button>
             </form>
         </div>
     );
