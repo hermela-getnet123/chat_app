@@ -83,7 +83,7 @@ function App() {
                 </button>
             </header>
 
-            <ChatPage />
+            <ChatPage currentUser={user} />
         </div>
     );
 }
