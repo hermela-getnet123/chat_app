@@ -76,23 +76,21 @@ io.use((socket, next) => {
 const onlineUsers = new Map();
 // Socket connection
 io.on('connection', (socket) => {
+    const userId = String(socket.user.userId);
 
-        onlineUsers.set(
-        socket.user.userId,
-        socket.id
-    );
+    // Tell this user who was already online.
+    socket.emit('onlineUsers', Array.from(onlineUsers.keys()));
 
+    // Store this user's active socket.
+    onlineUsers.set(userId, socket.id);
+
+    // Notify everyone that this user is online.
     io.emit('userOnline', {
-        userId: socket.user.userId,
+        userId,
         username: socket.user.username
     });
-    console.log(
-        `User connected: ${socket.user.username}`
-    );
 
-    console.log(
-        `User ID: ${socket.user.userId}`
-    );
+    console.log(`${socket.user.username} connected`);
 
         // Join conversation
     socket.on('joinConversation', async (conversationId) => {
@@ -124,27 +122,36 @@ io.on('connection', (socket) => {
                 error: 'Failed to join conversation'
             });
         }
-
-        socket.on('typing', (conversationId) => {
-        socket.to(`conversation:${conversationId}`).emit(
-            'userTyping',
-            {
-                userId: socket.user.userId,
-                username: socket.user.username
-            }
-        );
     });
 
-        socket.on('stopTyping', (conversationId) => {
-        socket.to(`conversation:${conversationId}`).emit(
-            'userStoppedTyping',
-            {
-                userId: socket.user.userId
-            }
-        );
-    });
-    });
+    socket.on('typing', ({ conversationId }) => {
+    if (!conversationId) return;
 
+    const room = `conversation:${conversationId}`;
+    if (!socket.rooms.has(room)) return;
+
+    socket.to(room).emit('userTyping', {
+        userId: String(socket.user.userId),
+        username: socket.user.username,
+        conversationId
+    });
+});
+
+socket.on('stopTyping', ({ conversationId }) => {
+    if (!conversationId) return;
+
+    const room = `conversation:${conversationId}`;
+    if (!socket.rooms.has(room)) return;
+
+    socket.to(room).emit('userStoppedTyping', {
+        userId: String(socket.user.userId),
+        conversationId
+    });
+});
+
+    socket.on('leaveConversation', (conversationId) => {
+    socket.leave(`conversation:${conversationId}`);
+});
     // Send message
     socket.on(
         'sendMessage',
@@ -169,13 +176,12 @@ io.on('connection', (socket) => {
                         error: 'You are not a participant in this conversation'
                     });
                 }
-                const newMessage =
-                    await Message.create({
-                        sender: socket.user.userId,
-                        conversation: conversationId,
-                        text: text
-                    });
-
+               const newMessage = await Message.create({
+                    sender: socket.user.userId,
+                    conversation: conversationId,
+                    text: text.trim(),
+                    readBy: [socket.user.userId]
+                });
                 const populatedMessage =
                     await newMessage.populate(
                         'sender',
@@ -242,54 +248,53 @@ io.on('connection', (socket) => {
     );
 
     // Disconnect
-    socket.on('disconnect', () => {
-
-        onlineUsers.delete(socket.user.userId);
+socket.on('disconnect', () => {
+    // Don't mark the user offline if this socket was replaced
+    // by another connection for the same user.
+    if (onlineUsers.get(userId) === socket.id) {
+        onlineUsers.delete(userId);
 
         io.emit('userOffline', {
-            userId: socket.user.userId,
+            userId,
             username: socket.user.username
         });
+    }
 
-        console.log(
-            `User disconnected: ${socket.user.username}`
-        );
-    });
+    console.log(`${socket.user.username} disconnected`);
+});
 
-    socket.on('markAsRead', async (conversationId) => {
-
+socket.on('markAsRead', async (conversationId) => {
     try {
+        const userId = String(socket.user.userId);
+
+        const conversation = await Conversation.findOne({
+            _id: conversationId,
+            participants: userId
+        });
+
+        if (!conversation) {
+            return socket.emit('messageError', {
+                error: 'You cannot access this conversation'
+            });
+        }
 
         await Message.updateMany(
             {
                 conversation: conversationId,
-                sender: {
-                    $ne: socket.user.userId
-                },
-                readBy: {
-                    $ne: socket.user.userId
-                }
+                sender: { $ne: userId },
+                readBy: { $ne: userId }
             },
             {
-                $addToSet: {
-                    readBy: socket.user.userId
-                }
+                $addToSet: { readBy: userId }
             }
         );
 
-        socket.to(
-            `conversation:${conversationId}`
-        ).emit('messagesRead', {
-            userId: socket.user.userId,
-            conversationId: conversationId
+        socket.to(`conversation:${conversationId}`).emit('messagesRead', {
+            userId,
+            conversationId
         });
-
     } catch (error) {
-
-        console.error(
-            'Read receipt error:',
-            error.message
-        );
+        console.error('Error marking messages as read:', error.message);
 
         socket.emit('messageError', {
             error: 'Failed to mark messages as read'

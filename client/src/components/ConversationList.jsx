@@ -30,7 +30,7 @@ function ConversationList({
             setConversations(conversationData);
             setUsers(userData);
         } catch (err) {
-            setError(err.message);
+            setError(err.message || 'Failed to load data.');
         } finally {
             setLoading(false);
         }
@@ -45,11 +45,10 @@ function ConversationList({
             setCreatingUserId(otherUser._id);
             setError('');
 
-            // Reuse an existing conversation with this user if possible.
+            // Check whether a conversation already exists.
             const existing = conversations.find((conversation) => {
                 const participantIds = conversation.participants.map(
-                    (participant) =>
-                        String(participant._id || participant)
+                    (person) => String(person._id || person)
                 );
 
                 return (
@@ -72,9 +71,9 @@ function ConversationList({
                 })
             });
 
-            const newConversation = result.data;
+            const newConversation = result.data || result;
 
-            // Fetch again so participant names are populated.
+            // Reload to get populated participant names.
             const updatedConversations = await apiFetch('/conversations');
             setConversations(updatedConversations);
 
@@ -88,7 +87,7 @@ function ConversationList({
 
             setShowUsers(false);
         } catch (err) {
-            setError(err.message);
+            setError(err.message || 'Failed to start conversation.');
         } finally {
             setCreatingUserId(null);
         }
@@ -113,8 +112,7 @@ function ConversationList({
                     <h3>Choose a user</h3>
 
                     {users.filter(
-                        (person) =>
-                            String(person._id) !== currentUserId
+                        (person) => String(person._id) !== currentUserId
                     ).map((person) => (
                         <button
                             key={person._id}
@@ -161,9 +159,15 @@ function ConversationList({
                         {conversation.participants
                             .filter(
                                 (person) =>
-                                    String(person._id || person) !== currentUserId
+                                    String(person._id || person) !==
+                                    currentUserId
                             )
-                            .map((person) => person.username || person.email || 'User')
+                            .map(
+                                (person) =>
+                                    person.username ||
+                                    person.email ||
+                                    'User'
+                            )
                             .join(', ') || 'Conversation'}
                     </button>
                 ))
@@ -173,3 +177,4 @@ function ConversationList({
 }
 
 export default ConversationList;
+
