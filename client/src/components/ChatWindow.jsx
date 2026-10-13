@@ -1,67 +1,60 @@
 
 import { useEffect, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
 import { apiFetch } from '../services/api';
 
-function ChatWindow({ conversation }) {
+function ChatWindow({ conversation, currentUser, socket, onlineUserIds = [] }) {
     const [messages, setMessages] = useState([]);
     const [text, setText] = useState('');
     const [error, setError] = useState('');
     const [connected, setConnected] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [typingUser, setTypingUser] = useState('');
+    const typingTimeoutRef = useRef(null);
 
-    const socketRef = useRef(null);
+    const conversationId = conversation?._id;
+    const currentUserId = String(
+        currentUser?.userId || currentUser?._id || ''
+    );
 
     useEffect(() => {
-        const token = localStorage.getItem('token');
-        const conversationId = conversation?._id;
+        if (!socket) {
+            setConnected(false);
+            return;
+        }
 
-        if (!token || !conversationId) {
+        const handleConnect = () => setConnected(true);
+        const handleDisconnect = () => setConnected(false);
+
+        socket.on('connect', handleConnect);
+        socket.on('disconnect', handleDisconnect);
+
+        setConnected(socket.connected);
+
+        return () => {
+            socket.off('connect', handleConnect);
+            socket.off('disconnect', handleDisconnect);
+        };
+    }, [socket]);
+
+    useEffect(() => {
+        if (!socket || !conversationId) {
+            setMessages([]);
             setLoading(false);
             return;
         }
 
         let active = true;
+
         setMessages([]);
         setError('');
+        setTypingUser('');
         setLoading(true);
 
-        const socket = io('http://localhost:3000', {
-            auth: { token }
-        });
-
-        socketRef.current = socket;
-
-        socket.on('connect', () => {
-            if (!active) return;
-
-            setConnected(true);
-            socket.emit('joinConversation', conversationId);
-        });
-
-        socket.on('disconnect', () => {
-            if (active) setConnected(false);
-        });
-
-        socket.on('connect_error', (err) => {
-            if (active) setError(err.message);
-        });
-
-        socket.on('conversationError', (data) => {
-            if (active) setError(data.error);
-        });
-
-        socket.on('messageError', (data) => {
-            if (active) setError(data.error);
-        });
-
-        socket.on('newMessage', (message) => {
+        const handleNewMessage = (message) => {
             const messageConversationId =
                 message.conversation?._id || message.conversation;
 
-            if (
-                String(messageConversationId) !== String(conversationId)
-            ) {
+            if (String(messageConversationId) !== String(conversationId)) {
                 return;
             }
 
@@ -72,7 +65,75 @@ function ChatWindow({ conversation }) {
 
                 return [...previous, message];
             });
-        });
+        };
+
+        const handleTyping = ({ userId, username, conversationId: id }) => {
+            if (
+                String(id) === String(conversationId) &&
+                String(userId) !== currentUserId
+            ) {
+                setTypingUser(username || 'Someone');
+            }
+        };
+
+        const handleStopTyping = ({ userId, conversationId: id }) => {
+            if (
+                String(id) === String(conversationId) &&
+                String(userId) !== currentUserId
+            ) {
+                setTypingUser('');
+            }
+        };
+
+        const handleMessagesRead = ({ userId, conversationId: id }) => {
+            if (String(id) !== String(conversationId)) return;
+            if (!userId || String(userId) === currentUserId) return;
+
+            setMessages((previous) =>
+                previous.map((message) => {
+                    const senderId = String(
+                        message.sender?._id || message.sender
+                    );
+
+                    if (senderId !== currentUserId) return message;
+
+                    const readBy = message.readBy || [];
+
+                    return {
+                        ...message,
+                        readBy: readBy.some((id) => String(id) === String(userId))
+                            ? readBy
+                            : [...readBy, userId]
+                    };
+                })
+            );
+        };
+
+        const handleConversationError = (data) => {
+            if (active) setError(data.error || 'Conversation error');
+        };
+
+        const handleMessageError = (data) => {
+            if (active) setError(data.error || 'Message error');
+        };
+
+        socket.on('newMessage', handleNewMessage);
+        socket.on('userTyping', handleTyping);
+        socket.on('userStoppedTyping', handleStopTyping);
+        socket.on('messagesRead', handleMessagesRead);
+        socket.on('conversationError', handleConversationError);
+        socket.on('messageError', handleMessageError);
+
+        const joinAndRead = () => {
+            socket.emit('joinConversation', conversationId);
+            socket.emit('markAsRead', conversationId);
+        };
+
+        if (socket.connected) {
+            joinAndRead();
+        }
+
+        socket.on('connect', joinAndRead);
 
         const loadMessages = async () => {
             try {
@@ -80,7 +141,10 @@ function ChatWindow({ conversation }) {
                     `/messages?conversationId=${conversationId}`
                 );
 
-                if (active) setMessages(data);
+                if (active) {
+                    setMessages(Array.isArray(data) ? data : data.data || []);
+                    socket.emit('markAsRead', conversationId);
+                }
             } catch (err) {
                 if (active) setError(err.message);
             } finally {
@@ -92,21 +156,47 @@ function ChatWindow({ conversation }) {
 
         return () => {
             active = false;
-            socket.disconnect();
 
-            if (socketRef.current === socket) {
-                socketRef.current = null;
+            if (typingTimeoutRef.current) {
+                clearTimeout(typingTimeoutRef.current);
             }
-        };
-    }, [conversation?._id]);
 
-    const handleSend = (e) => {
-        e.preventDefault();
+            socket.emit('stopTyping', { conversationId });
+            socket.emit('leaveConversation', conversationId);
+
+            socket.off('connect', joinAndRead);
+            socket.off('newMessage', handleNewMessage);
+            socket.off('userTyping', handleTyping);
+            socket.off('userStoppedTyping', handleStopTyping);
+            socket.off('messagesRead', handleMessagesRead);
+            socket.off('conversationError', handleConversationError);
+            socket.off('messageError', handleMessageError);
+        };
+    }, [socket, conversationId, currentUserId]);
+
+    const handleTextChange = (event) => {
+        const value = event.target.value;
+        setText(value);
+
+        if (!socket || !conversationId || !socket.connected) return;
+
+        socket.emit('typing', { conversationId });
+
+        if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+        }
+
+        typingTimeoutRef.current = setTimeout(() => {
+            socket.emit('stopTyping', { conversationId });
+        }, 1000);
+    };
+
+    const handleSend = (event) => {
+        event.preventDefault();
 
         const messageText = text.trim();
-        const socket = socketRef.current;
 
-        if (!messageText || !conversation?._id) return;
+        if (!messageText || !conversationId) return;
 
         if (!socket || !socket.connected) {
             setError('Not connected. Please wait and try again.');
@@ -114,12 +204,12 @@ function ChatWindow({ conversation }) {
         }
 
         setError('');
-
         socket.emit('sendMessage', {
-            conversationId: conversation._id,
+            conversationId,
             text: messageText
         });
 
+        socket.emit('stopTyping', { conversationId });
         setText('');
     };
 
@@ -127,17 +217,28 @@ function ChatWindow({ conversation }) {
         return <p>Select a conversation to start chatting.</p>;
     }
 
+    const otherParticipant = conversation.participants?.find(
+        (participant) =>
+            String(participant._id || participant) !== currentUserId
+    );
+    const otherParticipantId = String(
+        otherParticipant?._id || otherParticipant || ''
+    );
+    const otherParticipantOnline = onlineUserIds.includes(otherParticipantId);
+
     return (
         <div>
-            <h2>Chat</h2>
+            <h2>
+                {otherParticipant?.username || 'Chat'}
+                {otherParticipantId && (
+                    <small style={{ marginLeft: '10px', fontWeight: 'normal' }}>
+                        {otherParticipantOnline ? 'Online' : 'Offline'}
+                    </small>
+                )}
+            </h2>
+            <p>{connected ? 'Connected' : 'Connecting...'}</p>
 
-            <p>
-                {connected ? 'Connected' : 'Connecting...'}
-            </p>
-
-            {error && (
-                <p style={{ color: 'red' }}>{error}</p>
-            )}
+            {error && <p style={{ color: 'red' }}>{error}</p>}
 
             <div
                 style={{
@@ -154,32 +255,59 @@ function ChatWindow({ conversation }) {
                 ) : messages.length === 0 ? (
                     <p>No messages yet. Say hello!</p>
                 ) : (
-                    messages.map((message) => (
-                        <div key={message._id} style={{ marginBottom: '12px' }}>
-                            <strong>
-                                {message.sender?.username || 'User'}
-                            </strong>
-                            <p style={{ margin: '4px 0' }}>
-                                {message.text}
-                            </p>
-                            <small>
-                                {message.createdAt
-                                    ? new Date(message.createdAt).toLocaleTimeString()
-                                    : ''}
-                            </small>
-                        </div>
-                    ))
+                    messages.map((message) => {
+                        const senderId = String(
+                            message.sender?._id || message.sender
+                        );
+                        const isMine = senderId === currentUserId;
+                        const readBy = message.readBy || [];
+                        const isRead = isMine && readBy.some(
+                            (id) => String(id) !== currentUserId
+                        );
+
+                        return (
+                            <div
+                                key={message._id}
+                                style={{
+                                    marginBottom: '12px',
+                                    textAlign: isMine ? 'right' : 'left'
+                                }}
+                            >
+                                <strong>
+                                    {message.sender?.username || 'User'}
+                                </strong>
+                                <p style={{ margin: '4px 0' }}>
+                                    {message.text}
+                                </p>
+                                <small>
+                                    {message.createdAt
+                                        ? new Date(
+                                            message.createdAt
+                                        ).toLocaleTimeString()
+                                        : ''}
+                                    {isMine && (
+                                        <> · {isRead ? 'Read' : 'Sent'}</>
+                                    )}
+                                </small>
+                            </div>
+                        );
+                    })
                 )}
             </div>
+
+            {typingUser && (
+                <p style={{ color: '#666' }}>
+                    {typingUser} is typing...
+                </p>
+            )}
 
             <form onSubmit={handleSend}>
                 <input
                     value={text}
-                    onChange={(e) => setText(e.target.value)}
+                    onChange={handleTextChange}
                     placeholder="Type a message..."
                     style={{ padding: '10px', width: '70%' }}
                 />
-
                 <button
                     type="submit"
                     disabled={!connected || !text.trim()}

@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 
 const express = require('express');
@@ -12,92 +13,95 @@ const Conversation = require('./models/Conversation');
 const Notification = require('./models/Notification');
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
 connectDB();
 
-const messageRoutes = require('./routes/messageRoutes');
-const userRoutes = require('./routes/userRoutes');
-const authRoutes = require('./routes/authRoutes');
-const conversationRoutes = require('./routes/conversationRoutes');
-
-app.use(messageRoutes);
-app.use(userRoutes);
-app.use(authRoutes);
-app.use(conversationRoutes);
-
+app.use(require('./routes/messageRoutes'));
+app.use(require('./routes/userRoutes'));
+app.use(require('./routes/authRoutes'));
+app.use(require('./routes/conversationRoutes'));
 
 app.get('/', (req, res) => {
     res.send('Chat server is running!');
 });
 
 app.use((err, req, res, next) => {
-    console.error(err.message);
-
+    console.error('Express error:', err.message);
     res.status(500).json({
         error: 'Something went wrong on the server'
     });
 });
 
-// Create HTTP server
 const server = http.createServer(app);
 
-// Create Socket.IO server
 const io = new Server(server, {
     cors: {
-        origin: '*'
+        origin: 'http://localhost:5173',
+        methods: ['GET', 'POST']
     }
 });
 
-// Socket authentication
+// userId -> Set of socket IDs.
+// This supports one user connected in multiple browser tabs.
+const onlineUsers = new Map();
+
 io.use((socket, next) => {
     try {
-        const token = socket.handshake.auth.token;
+        const token = socket.handshake.auth?.token;
 
         if (!token) {
             return next(new Error('Authentication required'));
         }
 
-        const decoded = jwt.verify(
-            token,
-            process.env.JWT_SECRET
-        );
+        socket.user = jwt.verify(token, process.env.JWT_SECRET);
 
-        socket.user = decoded;
+        if (!socket.user.userId) {
+            return next(new Error('Invalid token payload'));
+        }
 
         next();
-
     } catch (error) {
         next(new Error('Invalid or expired token'));
     }
 });
 
-const onlineUsers = new Map();
-// Socket connection
 io.on('connection', (socket) => {
     const userId = String(socket.user.userId);
+    const username = socket.user.username || 'User';
+    const wasOffline = !onlineUsers.has(userId);
 
-    // Tell this user who was already online.
+    // A personal room lets us notify all of this user's tabs.
+    socket.join(`user:${userId}`);
+
+    if (!onlineUsers.has(userId)) {
+        onlineUsers.set(userId, new Set());
+    }
+
+    onlineUsers.get(userId).add(socket.id);
+
+    // Send the updated online list to this connection.
     socket.emit('onlineUsers', Array.from(onlineUsers.keys()));
 
-    // Store this user's active socket.
-    onlineUsers.set(userId, socket.id);
+    // Tell other connected clients this user is online.
+    if (wasOffline) {
+        socket.broadcast.emit('userOnline', {
+            userId,
+            username
+        });
+    }
 
-    // Notify everyone that this user is online.
-    io.emit('userOnline', {
-        userId,
-        username: socket.user.username
-    });
+    console.log(`${username} connected`);
 
-    console.log(`${socket.user.username} connected`);
-
-        // Join conversation
     socket.on('joinConversation', async (conversationId) => {
         try {
+            if (!conversationId) return;
+
             const conversation = await Conversation.findOne({
                 _id: conversationId,
-                participants: socket.user.userId
+                participants: userId
             });
 
             if (!conversation) {
@@ -108,15 +112,9 @@ io.on('connection', (socket) => {
 
             socket.join(`conversation:${conversationId}`);
 
-            console.log(
-                `${socket.user.username} joined conversation ${conversationId}`
-            );
-
+            console.log(`${username} joined conversation ${conversationId}`);
         } catch (error) {
-            console.error(
-                'Error joining conversation:',
-                error.message
-            );
+            console.error('Join conversation error:', error.message);
 
             socket.emit('conversationError', {
                 error: 'Failed to join conversation'
@@ -124,185 +122,197 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('typing', ({ conversationId }) => {
-    if (!conversationId) return;
-
-    const room = `conversation:${conversationId}`;
-    if (!socket.rooms.has(room)) return;
-
-    socket.to(room).emit('userTyping', {
-        userId: String(socket.user.userId),
-        username: socket.user.username,
-        conversationId
-    });
-});
-
-socket.on('stopTyping', ({ conversationId }) => {
-    if (!conversationId) return;
-
-    const room = `conversation:${conversationId}`;
-    if (!socket.rooms.has(room)) return;
-
-    socket.to(room).emit('userStoppedTyping', {
-        userId: String(socket.user.userId),
-        conversationId
-    });
-});
-
     socket.on('leaveConversation', (conversationId) => {
-    socket.leave(`conversation:${conversationId}`);
-});
-    // Send message
-    socket.on(
-        'sendMessage',
-        async ({ conversationId, text }) => {
-
-            try {
-
-                if (!conversationId || !text) {
-                    return socket.emit('messageError', {
-                        error:
-                            'Conversation ID and text are required'
-                    });
-                }
-                
-                let conversation = await Conversation.findOne({
-                    _id: conversationId,
-                    participants: socket.user.userId
-                });
-
-                if (!conversation) {
-                    return socket.emit('messageError', {
-                        error: 'You are not a participant in this conversation'
-                    });
-                }
-               const newMessage = await Message.create({
-                    sender: socket.user.userId,
-                    conversation: conversationId,
-                    text: text.trim(),
-                    readBy: [socket.user.userId]
-                });
-                const populatedMessage =
-                    await newMessage.populate(
-                        'sender',
-                        'username email'
-                    );
-
-                conversation = await Conversation
-                    .findById(conversationId)
-                    .populate('participants', 'username email');
-                for (const participant of conversation.participants) {
-
-            if (participant._id.toString() === socket.user.userId) {
-                continue;
-            }
-
-            const notification = await Notification.create({
-                recipient: participant._id,
-                sender: socket.user.userId,
-                conversation: conversationId,
-                message: newMessage._id,
-                type: 'message'
-            });
-
-            const recipientSocketId =
-                onlineUsers.get(participant._id.toString());
-
-            if (recipientSocketId) {
-
-                io.to(recipientSocketId).emit(
-                    'notification',
-                    {
-                        id: notification._id,
-                        type: 'message',
-                        sender: {
-                            id: socket.user.userId,
-                            username: socket.user.username
-                        },
-                        conversationId: conversationId,
-                        messageId: newMessage._id,
-                        text: text
-                    }
-                );
-            }
+        if (conversationId) {
+            socket.leave(`conversation:${conversationId}`);
         }
-                io.to(
-                    `conversation:${conversationId}`
-                ).emit(
-                    'newMessage',
-                    populatedMessage
-                );
+    });
 
-            } catch (error) {
+    socket.on('typing', async ({ conversationId } = {}) => {
+        if (!conversationId) return;
 
-                console.error(
-                    'Socket message error:',
-                    error.message
-                );
+        const room = `conversation:${conversationId}`;
+        if (!socket.rooms.has(room)) return;
 
-                socket.emit('messageError', {
-                    error: 'Failed to send message'
-                });
-            }
-        }
-    );
-
-    // Disconnect
-socket.on('disconnect', () => {
-    // Don't mark the user offline if this socket was replaced
-    // by another connection for the same user.
-    if (onlineUsers.get(userId) === socket.id) {
-        onlineUsers.delete(userId);
-
-        io.emit('userOffline', {
+        socket.to(room).emit('userTyping', {
             userId,
-            username: socket.user.username
+            username,
+            conversationId
         });
-    }
+    });
 
-    console.log(`${socket.user.username} disconnected`);
-});
+    socket.on('stopTyping', ({ conversationId } = {}) => {
+        if (!conversationId) return;
 
-socket.on('markAsRead', async (conversationId) => {
-    try {
-        const userId = String(socket.user.userId);
+        const room = `conversation:${conversationId}`;
+        if (!socket.rooms.has(room)) return;
 
-        const conversation = await Conversation.findOne({
-            _id: conversationId,
-            participants: userId
-        });
-
-        if (!conversation) {
-            return socket.emit('messageError', {
-                error: 'You cannot access this conversation'
-            });
-        }
-
-        await Message.updateMany(
-            {
-                conversation: conversationId,
-                sender: { $ne: userId },
-                readBy: { $ne: userId }
-            },
-            {
-                $addToSet: { readBy: userId }
-            }
-        );
-
-        socket.to(`conversation:${conversationId}`).emit('messagesRead', {
+        socket.to(room).emit('userStoppedTyping', {
             userId,
             conversationId
         });
-    } catch (error) {
-        console.error('Error marking messages as read:', error.message);
+    });
 
-        socket.emit('messageError', {
-            error: 'Failed to mark messages as read'
-        });
-    }
-});
+    socket.on('sendMessage', async ({ conversationId, text } = {}) => {
+        try {
+            const messageText =
+                typeof text === 'string' ? text.trim() : '';
+
+            if (!conversationId || !messageText) {
+                return socket.emit('messageError', {
+                    error: 'Conversation ID and text are required'
+                });
+            }
+
+            // Confirm the sender belongs to this conversation.
+            const conversation = await Conversation.findOne({
+                _id: conversationId,
+                participants: userId
+            });
+
+            if (!conversation) {
+                return socket.emit('messageError', {
+                    error: 'You are not a participant in this conversation'
+                });
+            }
+
+            const newMessage = await Message.create({
+                sender: userId,
+                conversation: conversationId,
+                text: messageText,
+                readBy: [userId]
+            });
+
+            const populatedMessage = await Message.findById(newMessage._id)
+                .populate('sender', 'username email');
+
+            // Deliver the message to everyone currently in this chat room.
+            io.to(`conversation:${conversationId}`).emit(
+                'newMessage',
+                populatedMessage
+            );
+
+            // Create and deliver a notification for each other participant.
+            const populatedConversation = await Conversation.findById(
+                conversationId
+            ).populate('participants', 'username email');
+
+            for (const participant of populatedConversation.participants) {
+                const recipientId = String(participant._id);
+
+                if (recipientId === userId) continue;
+
+                try {
+                    const notification = await Notification.create({
+                        recipient: participant._id,
+                        sender: userId,
+                        conversation: conversationId,
+                        message: newMessage._id,
+                        type: 'message'
+                    });
+
+                    io.to(`user:${recipientId}`).emit('notification', {
+                        id: String(notification._id),
+                        type: 'message',
+                        sender: {
+                            id: userId,
+                            username
+                        },
+                        conversationId: String(conversationId),
+                        messageId: String(newMessage._id),
+                        text: messageText,
+                        createdAt: notification.createdAt
+                    });
+                } catch (notificationError) {
+                    // A notification failure should not undo a sent message.
+                    console.error(
+                        'Notification error:',
+                        notificationError.message
+                    );
+                }
+            }
+        } catch (error) {
+            console.error('Socket message error:', error.message);
+
+            socket.emit('messageError', {
+                error: 'Failed to send message'
+            });
+        }
+    });
+
+    socket.on('markAsRead', async (conversationId) => {
+        try {
+            if (!conversationId) return;
+
+            const conversation = await Conversation.findOne({
+                _id: conversationId,
+                participants: userId
+            });
+
+            if (!conversation) {
+                return socket.emit('messageError', {
+                    error: 'You cannot access this conversation'
+                });
+            }
+
+            await Message.updateMany(
+                {
+                    conversation: conversationId,
+                    sender: { $ne: userId },
+                    readBy: { $ne: userId }
+                },
+                {
+                    $addToSet: { readBy: userId }
+                }
+            );
+
+            await Notification.updateMany(
+                {
+                    conversation: conversationId,
+                    recipient: userId,
+                    isRead: false
+                },
+                { $set: { isRead: true } }
+            );
+
+            io.to(`user:${userId}`).emit('notificationsRead', {
+                conversationId: String(conversationId)
+            });
+
+            socket.to(`conversation:${conversationId}`).emit('messagesRead', {
+                userId,
+                conversationId
+            });
+        } catch (error) {
+            console.error('Mark-as-read error:', error.message);
+
+            socket.emit('messageError', {
+                error: 'Failed to mark messages as read'
+            });
+        }
+    });
+
+    socket.on('disconnect', () => {
+        const sockets = onlineUsers.get(userId);
+
+        if (sockets) {
+            sockets.delete(socket.id);
+
+            // Only mark the user offline when their last socket disconnects.
+            if (sockets.size === 0) {
+                onlineUsers.delete(userId);
+
+                io.emit('userOffline', {
+                    userId,
+                    username
+                });
+            }
+        }
+
+        console.log(`${username} disconnected`);
+    });
 });
 
 server.listen(3000, () => {
-    console.log('Server running on http://localhost:3000');
+    console.log('Chat server running on http://localhost:3000');
 });
